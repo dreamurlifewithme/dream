@@ -1,5 +1,6 @@
+require('dotenv').config();
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const bodyParser = require('body-parser');
 const path = require('path');
 const bcrypt = require('bcrypt');
@@ -19,10 +20,10 @@ app.set('views', path.join(__dirname, 'views')); // Set views directory
 
 // Session middleware
 app.use(session({
-    secret: 'your_secret_key', // Replace with a strong secret key
+    secret: process.env.SESSION_SECRET, // Using environment variable
     resave: false,
     saveUninitialized: true,
-    cookie: { secure: false } // Set to true if using HTTPS
+    cookie: { secure: process.env.NODE_ENV === 'production' } // Set to true if using HTTPS in production
 }));
 
 // Configure Multer for file uploads
@@ -39,33 +40,37 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// Database setup
-const dbPath = path.join(__dirname, 'database', 'dreamurlife.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error('Error connecting to database:', err.message);
-    } else {
-        console.log('Connected to the SQLite database.');
-        // Create users table if it doesn't exist
-        db.run(`CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            dob TEXT NOT NULL,
-            city TEXT NOT NULL,
-            contact TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            is_winner INTEGER DEFAULT 0,
-            winner_position TEXT DEFAULT NULL,
-            status TEXT DEFAULT 'Active',
-            profile_pic TEXT DEFAULT NULL  -- Added profile_pic column
-        )`, (err) => {
-            if (err) {
-                console.error('Error creating users table:', err.message);
-            }
-        });
-    }
+// Database setup for PostgreSQL
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL
 });
+
+// Function to create users table if it doesn't exist
+const createUsersTable = async () => {
+    const queryText = `CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        dob TEXT NOT NULL,
+        city TEXT NOT NULL,
+        contact TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        is_winner INTEGER DEFAULT 0,
+        winner_position TEXT DEFAULT NULL,
+        status TEXT DEFAULT 'Active',
+        profile_pic TEXT DEFAULT NULL
+    )`;
+    try {
+        await pool.query(queryText);
+        console.log('Users table is ready.');
+    } catch (err) {
+        console.error('Error creating users table:', err.stack);
+    }
+};
+
+// Call the function to ensure the table exists when the app starts
+createUsersTable();
+
 
 // Prize Definitions
 const prizes = [
@@ -98,76 +103,45 @@ app.get('/register', (req, res) => {
 
 // User Registration POST route
 app.post('/register', async (req, res) => {
-    const { name, dob, city, contact, email, userId, password, confirmPassword } = req.body; // Added userId
+    const { name, dob, city, contact, email, userId, password, confirmPassword } = req.body;
 
-    // Basic server-side validation
-    if (!name || !dob || !city || !contact || !email || !userId || !password || !confirmPassword) { // Added userId
+    if (!name || !dob || !city || !contact || !email || !userId || !password || !confirmPassword) {
         return res.render('register', { message: 'All fields are required.' });
     }
-
-    // Validate email format
     if (!/\S+@\S+\.\S+/.test(email)) {
         return res.render('register', { message: 'Invalid email format.' });
     }
-
-    // Validate contact number (10 digits)
     if (!/^\d{10}$/.test(contact)) {
         return res.render('register', { message: 'Contact number must be 10 digits.' });
     }
-
-    // Validate User ID format (e.g., alphanumeric, 6-15 characters)
     if (!/^[a-zA-Z0-9]{6,15}$/.test(userId)) {
         return res.render('register', { message: 'User ID must be 6-15 alphanumeric characters.' });
     }
-
-    // Validate password length
     if (password.length < 6) {
         return res.render('register', { message: 'Password must be at least 6 characters long.' });
     }
-
-    // Validate password match
     if (password !== confirmPassword) {
         return res.render('register', { message: 'Passwords do not match.' });
     }
 
     try {
-        // Check if email already exists
-        const existingUserByEmail = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM users WHERE email = ?', [email], (err, row) => {
-                if (err) reject(err);
-                resolve(row);
-            });
-        });
-
-        if (existingUserByEmail) {
+        let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (result.rows.length > 0) {
             return res.render('register', { message: 'Email already registered.' });
         }
 
-        // Check if User ID already exists
-        const existingUserById = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
-                if (err) reject(err);
-                resolve(row);
-            });
-        });
-
-        if (existingUserById) {
+        result = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+        if (result.rows.length > 0) {
             return res.render('register', { message: 'User ID already taken.' });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10); // Hash the user-provided password
+        const hashedPassword = await bcrypt.hash(password, 10);
 
-        db.run('INSERT INTO users (id, name, dob, city, contact, email, password) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [userId, name, dob, city, contact, email, hashedPassword],
-            function (err) {
-                if (err) {
-                    console.error('Error inserting user:', err.message);
-                    return res.render('register', { message: 'Error registering user.' });
-                }
-                // Render a success page or message with UserID (password is user-provided)
-                res.render('registration_success', { userId: userId, rawPassword: password }); // Pass user-provided password
-            }
-        );
+        await pool.query('INSERT INTO users (id, name, dob, city, contact, email, password) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+            [userId, name, dob, city, contact, email, hashedPassword]);
+
+        res.render('registration_success', { userId: userId, rawPassword: password });
+
     } catch (error) {
         console.error('Registration error:', error);
         res.render('register', { message: 'An unexpected error occurred.' });
@@ -187,23 +161,14 @@ app.post('/upload-photo', upload.single('profilePic'), async (req, res) => {
     if (!req.session.userId) {
         return res.redirect('/login');
     }
-
     if (!req.file) {
         return res.render('upload_photo', { message: 'Please select an image to upload.' });
     }
-
     const profilePicPath = '/uploads/profile_pics/' + req.file.filename;
-
     try {
-        db.run('UPDATE users SET profile_pic = ? WHERE id = ?', [profilePicPath, req.session.userId], (err) => {
-            if (err) {
-                console.error('Error updating profile picture:', err.message);
-                return res.render('upload_photo', { message: 'Error uploading photo.' });
-            }
-            // Update session user data
-            req.session.user.profile_pic = profilePicPath;
-            res.render('upload_photo', { message: 'Photo uploaded successfully!', success: true });
-        });
+        await pool.query('UPDATE users SET profile_pic = $1 WHERE id = $2', [profilePicPath, req.session.userId]);
+        req.session.user.profile_pic = profilePicPath;
+        res.render('upload_photo', { message: 'Photo uploaded successfully!', success: true });
     } catch (error) {
         console.error('Photo upload error:', error);
         res.render('upload_photo', { message: 'An unexpected error occurred.' });
@@ -218,29 +183,20 @@ app.get('/login', (req, res) => {
 // User Login POST route
 app.post('/login', async (req, res) => {
     const { userId, password } = req.body;
-
     if (!userId || !password) {
         return res.render('login', { message: 'Please enter both User ID and Password.' });
     }
-
     try {
-        const user = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
-                if (err) reject(err);
-                resolve(row);
-            });
-        });
-
+        const result = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+        const user = result.rows[0];
         if (!user) {
             return res.render('login', { message: 'Invalid User ID or Password.' });
         }
-
         const passwordMatch = await bcrypt.compare(password, user.password);
-
         if (passwordMatch) {
-            req.session.userId = user.id; // Store user ID in session
-            req.session.user = user; // Store user object in session
-            res.redirect('/dashboard'); // Redirect to user dashboard
+            req.session.userId = user.id;
+            req.session.user = user;
+            res.redirect('/dashboard');
         } else {
             res.render('login', { message: 'Invalid User ID or Password.' });
         }
@@ -251,31 +207,26 @@ app.post('/login', async (req, res) => {
 });
 
 // User Dashboard
-app.get('/dashboard', (req, res) => {
+app.get('/dashboard', async (req, res) => {
     if (!req.session.userId) {
-        return res.redirect('/login'); // Redirect to login if not authenticated
+        return res.redirect('/login');
     }
-
-    // Fetch total users and active users
-    db.get('SELECT COUNT(*) AS totalUsers FROM users', (err, totalUsersRow) => {
-        if (err) {
-            console.error('Error fetching total users:', err.message);
-            return res.render('dashboard', { user: req.session.user, message: 'Error loading dashboard.', prizes: prizes, totalUsers: 0, activeUsers: 0 });
-        }
-        db.get('SELECT COUNT(*) AS activeUsers FROM users WHERE status = \'Active\'', (err, activeUsersRow) => {
-            if (err) {
-                console.error('Error fetching active users:', err.message);
-                return res.render('dashboard', { user: req.session.user, message: 'Error loading dashboard.', prizes: prizes, totalUsers: totalUsersRow.totalUsers, activeUsers: 0 });
-            }
-            res.render('dashboard', {
-                user: req.session.user,
-                message: null,
-                prizes: prizes,
-                totalUsers: totalUsersRow.totalUsers,
-                activeUsers: activeUsersRow.activeUsers
-            });
+    try {
+        const totalUsersResult = await pool.query('SELECT COUNT(*)::int AS totalUsers FROM users');
+        const totalUsers = totalUsersResult.rows[0].totalusers;
+        const activeUsersResult = await pool.query('SELECT COUNT(*)::int AS activeUsers FROM users WHERE status = $1', ['Active']);
+        const activeUsers = activeUsersResult.rows[0].activeusers;
+        res.render('dashboard', {
+            user: req.session.user,
+            message: null,
+            prizes: prizes,
+            totalUsers: totalUsers,
+            activeUsers: activeUsers
         });
-    });
+    } catch (error) {
+        console.error('Error loading dashboard:', error);
+        res.render('dashboard', { user: req.session.user, message: 'Error loading dashboard.', prizes: prizes, totalUsers: 0, activeUsers: 0 });
+    }
 });
 
 // Edit Profile GET route
@@ -291,27 +242,18 @@ app.post('/edit-profile', async (req, res) => {
     if (!req.session.userId) {
         return res.redirect('/login');
     }
-
     const { name, dob, city, contact, email, newPassword, confirmNewPassword } = req.body;
     const currentUserId = req.session.userId;
-
-    // Basic validation
     if (!name || !dob || !city || !contact || !email) {
         return res.render('edit_profile', { user: req.session.user, message: 'All fields except new password are required.' });
     }
-
-    // Validate email format
     if (!/\S+@\S+\.\S+/.test(email)) {
         return res.render('edit_profile', { user: req.session.user, message: 'Invalid email format.' });
     }
-
-    // Validate contact number (10 digits)
     if (!/^\d{10}$/.test(contact)) {
         return res.render('edit_profile', { user: req.session.user, message: 'Contact number must be 10 digits.' });
     }
-
-    let hashedPassword = req.session.user.password; // Default to current hashed password
-
+    let hashedPassword = req.session.user.password;
     if (newPassword) {
         if (newPassword.length < 6) {
             return res.render('edit_profile', { user: req.session.user, message: 'New password must be at least 6 characters long.' });
@@ -321,32 +263,15 @@ app.post('/edit-profile', async (req, res) => {
         }
         hashedPassword = await bcrypt.hash(newPassword, 10);
     }
-
     try {
-        // Check if email is already taken by another user
-        const existingUserByEmail = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM users WHERE email = ? AND id != ?', [email, currentUserId], (err, row) => {
-                if (err) reject(err);
-                resolve(row);
-            });
-        });
-
-        if (existingUserByEmail) {
+        const result = await pool.query('SELECT * FROM users WHERE email = $1 AND id != $2', [email, currentUserId]);
+        if (result.rows.length > 0) {
             return res.render('edit_profile', { user: req.session.user, message: 'Email already taken by another user.' });
         }
-
-        db.run('UPDATE users SET name = ?, dob = ?, city = ?, contact = ?, email = ?, password = ? WHERE id = ?',
-            [name, dob, city, contact, email, hashedPassword, currentUserId],
-            function (err) {
-                if (err) {
-                    console.error('Error updating user profile:', err.message);
-                    return res.render('edit_profile', { user: req.session.user, message: 'Error updating profile.' });
-                }
-                // Update session user data
-                req.session.user = { ...req.session.user, name, dob, city, contact, email, password: hashedPassword };
-                res.render('edit_profile', { user: req.session.user, message: 'Profile updated successfully!' });
-            }
-        );
+        await pool.query('UPDATE users SET name = $1, dob = $2, city = $3, contact = $4, email = $5, password = $6 WHERE id = $7',
+            [name, dob, city, contact, email, hashedPassword, currentUserId]);
+        req.session.user = { ...req.session.user, name, dob, city, contact, email, password: hashedPassword };
+        res.render('edit_profile', { user: req.session.user, message: 'Profile updated successfully!' });
     } catch (error) {
         console.error('Edit profile error:', error);
         res.render('edit_profile', { user: req.session.user, message: 'An unexpected error occurred.' });
@@ -358,7 +283,7 @@ app.post('/logout', (req, res) => {
     req.session.destroy(err => {
         if (err) {
             console.error('Error destroying session:', err);
-            return res.redirect('/dashboard'); // Or show an error page
+            return res.redirect('/dashboard');
         }
         res.redirect('/login');
     });
@@ -372,36 +297,19 @@ app.get('/forgot-password', (req, res) => {
 // Forgot Password POST route
 app.post('/forgot-password', async (req, res) => {
     const { contact } = req.body;
-
     if (!contact) {
         return res.render('forgot_password', { message: 'Please enter your contact number.' });
     }
-
     try {
-        const user = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM users WHERE contact = ?', [contact], (err, row) => {
-                if (err) reject(err);
-                resolve(row);
-            });
-        });
-
+        const result = await pool.query('SELECT * FROM users WHERE contact = $1', [contact]);
+        const user = result.rows[0];
         if (!user) {
             return res.render('forgot_password', { message: 'No user found with that contact number.' });
         }
-
-        // Generate a new temporary password
-        const newTempPassword = generateRandomAlphanumericString(8); // Reusing the function
+        const newTempPassword = generateRandomAlphanumericString(8);
         const hashedNewPassword = await bcrypt.hash(newTempPassword, 10);
-
-        // Update user's password in the database
-        db.run('UPDATE users SET password = ? WHERE id = ?', [hashedNewPassword, user.id], (err) => {
-            if (err) {
-                console.error('Error updating password:', err.message);
-                return res.render('forgot_password', { message: 'Error resetting password.' });
-            }
-            res.render('forgot_password_success', { newPassword: newTempPassword });
-        });
-
+        await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hashedNewPassword, user.id]);
+        res.render('forgot_password_success', { newPassword: newTempPassword });
     } catch (error) {
         console.error('Forgot password error:', error);
         res.render('forgot_password', { message: 'An unexpected error occurred.' });
@@ -416,13 +324,10 @@ app.get('/admin/login', (req, res) => {
 // Admin Login POST route
 app.post('/admin/login', (req, res) => {
     const { username, password } = req.body;
-
-    // Hardcoded admin credentials
-    const ADMIN_USERNAME = 'DREAMURLIFEWITHME';
-    const ADMIN_PASSWORD = 'Raju@4832';
-
+    const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
+    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-        req.session.isAdmin = true; // Set admin session
+        req.session.isAdmin = true;
         res.redirect('/admin/dashboard');
     } else {
         res.render('admin_login', { message: 'Invalid Admin Username or Password.' });
@@ -430,76 +335,64 @@ app.post('/admin/login', (req, res) => {
 });
 
 // Admin Dashboard
-app.get('/admin/dashboard', (req, res) => {
+app.get('/admin/dashboard', async (req, res) => {
     if (!req.session.isAdmin) {
-        return res.redirect('/admin/login'); // Redirect to admin login if not authenticated
+        return res.redirect('/admin/login');
     }
-
-    // Fetch total users and active users
-    db.get('SELECT COUNT(*) AS totalUsers FROM users', (err, totalUsersRow) => {
-        if (err) {
-            console.error('Error fetching total users for admin dashboard:', err.message);
-            return res.render('admin_dashboard', { users: [], message: 'Error loading users.', prizes: prizes, winners: [], totalUsers: 0, activeUsers: 0 });
-        }
-        db.get('SELECT COUNT(*) AS activeUsers FROM users WHERE status = \'Active\'', (err, activeUsersRow) => {
-            if (err) {
-                console.error('Error fetching active users for admin dashboard:', err.message);
-                return res.render('admin_dashboard', { users: [], message: 'Error loading users.', prizes: prizes, winners: [], totalUsers: totalUsersRow.totalUsers, activeUsers: 0 });
-            }
-            // Fetch all users from the database
-            db.all('SELECT * FROM users', [], (err, users) => {
-                if (err) {
-                    console.error('Error fetching users for admin dashboard:', err.message);
-                    return res.render('admin_dashboard', { users: [], message: 'Error loading users.', prizes: prizes, winners: [], totalUsers: totalUsersRow.totalUsers, activeUsers: activeUsersRow.activeUsers });
-                }
-                // For now, winners array is empty. Will be populated after draw logic.
-                res.render('admin_dashboard', {
-                    users: users,
-                    message: null,
-                    prizes: prizes,
-                    winners: [],
-                    totalUsers: totalUsersRow.totalUsers,
-                    activeUsers: activeUsersRow.activeUsers
-                });
-            });
+    try {
+        const totalUsersResult = await pool.query('SELECT COUNT(*)::int AS totalUsers FROM users');
+        const totalUsers = totalUsersResult.rows[0].totalusers;
+        const activeUsersResult = await pool.query('SELECT COUNT(*)::int AS activeUsers FROM users WHERE status = $1', ['Active']);
+        const activeUsers = activeUsersResult.rows[0].activeusers;
+        const usersResult = await pool.query('SELECT * FROM users');
+        const users = usersResult.rows;
+        res.render('admin_dashboard', {
+            users: users,
+            message: null,
+            prizes: prizes,
+            winners: [],
+            totalUsers: totalUsers,
+            activeUsers: activeUsers
         });
-    });
+    } catch (error) {
+        console.error('Error loading admin dashboard:', error);
+        res.render('admin_dashboard', { users: [], message: 'Error loading users.', prizes: prizes, winners: [], totalUsers: 0, activeUsers: 0 });
+    }
 });
 
 // Admin Toggle User Status
-app.post('/admin/toggle-status/:id', (req, res) => {
+app.post('/admin/toggle-status/:id', async (req, res) => {
     if (!req.session.isAdmin) {
         return res.redirect('/admin/login');
     }
     const userId = req.params.id;
-    db.get('SELECT status FROM users WHERE id = ?', [userId], (err, row) => {
-        if (err) {
-            console.error('Error fetching user status:', err.message);
-            return res.redirect('/admin/dashboard');
-        }
-        const newStatus = row.status === 'Active' ? 'Deactivated' : 'Active';
-        db.run('UPDATE users SET status = ? WHERE id = ?', [newStatus, userId], (err) => {
-            if (err) {
-                console.error('Error updating user status:', err.message);
-            }
-            res.redirect('/admin/dashboard');
-        });
-    });
+    try {
+        const result = await pool.query('SELECT status FROM users WHERE id = $1', [userId]);
+        const user = result.rows[0];
+        const newStatus = user.status === 'Active' ? 'Deactivated' : 'Active';
+        await pool.query('UPDATE users SET status = $1 WHERE id = $2', [newStatus, userId]);
+        res.redirect('/admin/dashboard');
+    } catch (error) {
+        console.error('Error updating user status:', error);
+        res.redirect('/admin/dashboard');
+    }
 });
 
 // Admin Delete User
-app.post('/admin/delete-user/:id', (req, res) => {
+app.post('/admin/delete-user/:id', async (req, res) => {
     if (!req.session.isAdmin) {
         return res.redirect('/admin/login');
     }
     const userId = req.params.id;
-    db.run('DELETE FROM users WHERE id = ?', [userId], (err) => {
-        if (err) {
-            console.error('Error deleting user:', err.message);
-        }
+    try {
+        await pool.query('DELETE FROM users WHERE id = $1', [userId]);
         res.redirect('/admin/dashboard');
-    });
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        res.redirect('/admin/dashboard');
+    }
 });
+
 
 // Admin Logout route
 app.post('/admin/logout', (req, res) => {
