@@ -42,7 +42,10 @@ const upload = multer({ storage: storage });
 
 // Database setup for PostgreSQL
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
 });
 
 // Function to create users table if it doesn't exist
