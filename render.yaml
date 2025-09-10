@@ -12,3 +12,9 @@ services:
         value: instance142380
       - key: ULTRAMSG_TOKEN
         value: h5qmh41c8327z43j
+      - key: SESSION_SECRET
+        value: a_random_secret_key_for_session
+      - key: ADMIN_USERNAME
+        value: DREAMURLIFEWITHME
+      - key: ADMIN_PASSWORD
+        value: Raju@4832
