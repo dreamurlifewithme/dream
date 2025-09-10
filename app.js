@@ -135,6 +135,13 @@ app.post('/register', async (req, res) => {
     }
 
     try {
+        const totalUsersResult = await pool.query('SELECT COUNT(*) FROM users');
+        const totalUsers = parseInt(totalUsersResult.rows[0].count, 10);
+
+        if (totalUsers >= 20) {
+            return res.render('register', { message: 'Sorry, we are not accepting new registrations at this time.' });
+        }
+
         let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
         if (result.rows.length > 0) {
             return res.render('register', { message: 'Email already registered.' });
