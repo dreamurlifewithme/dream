@@ -69,6 +69,10 @@ const createUsersTable = async () => {
     try {
         await pool.query(queryText);
         console.log('Users table is ready.');
+        // Add has_spun column if it doesn't exist
+        await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS has_spun BOOLEAN DEFAULT false');
+        // Add spin_prize column if it doesn't exist
+        await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS spin_prize INTEGER');
     } catch (err) {
         console.error('Error creating users table:', err.stack);
     }
