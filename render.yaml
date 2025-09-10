@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: dreamurlifewithme
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node app.js
+    envVars:
+      - key: DATABASE_URL
+        value: postgresql://dream_database_user:3bU3z7hVBHdU6xOVC84vSmxts2oWad3y@dpg-d303dnf5r7bs73b06qk0-a.singapore-postgres.render.com/dream_database?sslmode=require
