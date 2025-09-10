@@ -240,16 +240,19 @@ app.get('/dashboard', async (req, res) => {
         const totalUsers = totalUsersResult.rows[0].totalusers;
         const activeUsersResult = await pool.query('SELECT COUNT(*)::int AS activeUsers FROM users WHERE status = $1', ['Active']);
         const activeUsers = activeUsersResult.rows[0].activeusers;
+        const winnersResult = await pool.query('SELECT * FROM users WHERE is_winner = 1 ORDER BY winner_position');
+        const winners = winnersResult.rows;
         res.render('dashboard', {
             user: user, // Pass the fresh user object to the template
             message: null,
             prizes: prizes,
             totalUsers: totalUsers,
-            activeUsers: activeUsers
+            activeUsers: activeUsers,
+            winners: winners
         });
     } catch (error) {
         console.error('Error loading dashboard:', error);
-        res.render('dashboard', { user: req.session.user, message: 'Error loading dashboard.', prizes: prizes, totalUsers: 0, activeUsers: 0 });
+        res.render('dashboard', { user: req.session.user, message: 'Error loading dashboard.', prizes: prizes, totalUsers: 0, activeUsers: 0, winners: [] });
     }
 });
 
