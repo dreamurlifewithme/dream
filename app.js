@@ -26,6 +26,8 @@ app.use(session({
     cookie: { secure: process.env.NODE_ENV === 'production' } // Set to true if using HTTPS in production
 }));
 
+app.set('trust proxy', 1);
+
 // Configure Multer for file uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -42,10 +44,7 @@ const upload = multer({ storage: storage });
 
 // Database setup for PostgreSQL
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-        rejectUnauthorized: false
-    }
+    connectionString: process.env.DATABASE_URL
 });
 
 // Function to create users table if it doesn't exist
@@ -343,12 +342,14 @@ app.get('/admin/dashboard', async (req, res) => {
         return res.redirect('/admin/login');
     }
     try {
+        console.log('Admin is authenticated. Fetching dashboard data...'); // ADD THIS LINE
         const totalUsersResult = await pool.query('SELECT COUNT(*)::int AS totalUsers FROM users');
         const totalUsers = totalUsersResult.rows[0].totalusers;
         const activeUsersResult = await pool.query('SELECT COUNT(*)::int AS activeUsers FROM users WHERE status = $1', ['Active']);
         const activeUsers = activeUsersResult.rows[0].activeusers;
         const usersResult = await pool.query('SELECT * FROM users');
         const users = usersResult.rows;
+        console.log('Dashboard data fetched. Rendering page...'); // ADD THIS LINE
         res.render('admin_dashboard', {
             users: users,
             message: null,
