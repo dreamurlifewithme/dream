@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: './.env' });
 const express = require('express');
 const { Pool } = require('pg');
 const bodyParser = require('body-parser');
@@ -6,6 +6,7 @@ const path = require('path');
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
 const session = require('express-session');
+const { sendCouponNotification, sendCouponRequestNotification } = require('./whatsapp');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -60,7 +61,10 @@ const createUsersTable = async () => {
         is_winner INTEGER DEFAULT 0,
         winner_position TEXT DEFAULT NULL,
         status TEXT DEFAULT 'Active',
-        profile_pic TEXT DEFAULT NULL
+        profile_pic TEXT DEFAULT NULL,
+        coupon_code TEXT,
+        has_spun BOOLEAN DEFAULT false,
+        spin_prize INTEGER
     )`;
     try {
         await pool.query(queryText);
@@ -214,12 +218,17 @@ app.get('/dashboard', async (req, res) => {
         return res.redirect('/login');
     }
     try {
+        // Fetch the latest user data from the database
+        const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [req.session.userId]);
+        const user = userResult.rows[0];
+        req.session.user = user; // Update the session with the latest data
+
         const totalUsersResult = await pool.query('SELECT COUNT(*)::int AS totalUsers FROM users');
         const totalUsers = totalUsersResult.rows[0].totalusers;
         const activeUsersResult = await pool.query('SELECT COUNT(*)::int AS activeUsers FROM users WHERE status = $1', ['Active']);
         const activeUsers = activeUsersResult.rows[0].activeusers;
         res.render('dashboard', {
-            user: req.session.user,
+            user: user, // Pass the fresh user object to the template
             message: null,
             prizes: prizes,
             totalUsers: totalUsers,
@@ -228,6 +237,22 @@ app.get('/dashboard', async (req, res) => {
     } catch (error) {
         console.error('Error loading dashboard:', error);
         res.render('dashboard', { user: req.session.user, message: 'Error loading dashboard.', prizes: prizes, totalUsers: 0, activeUsers: 0 });
+    }
+});
+
+// Coupon Request route
+app.post('/request-coupon', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({ message: 'You must be logged in.' });
+    }
+
+    try {
+        // Send notification to admin
+        sendCouponRequestNotification(req.session.user);
+        res.json({ message: 'Your request has been sent to the admin. You will see your coupon here once it is generated.' });
+    } catch (error) {
+        console.error('Coupon request error:', error);
+        res.status(500).json({ message: 'An unexpected error occurred.' });
     }
 });
 
@@ -318,6 +343,52 @@ app.post('/forgot-password', async (req, res) => {
     }
 });
 
+// Spin the wheel route
+app.post('/spin', async (req, res) => {
+    if (!req.session.userId) {
+        return res.status(401).json({ message: 'You must be logged in to spin.' });
+    }
+
+    try {
+        const result = await pool.query('SELECT has_spun, spin_prize FROM users WHERE id = $1', [req.session.userId]);
+        const user = result.rows[0];
+
+        if (user.has_spun) {
+            return res.status(400).json({ message: 'You have already spun the wheel.', prize: user.spin_prize });
+        }
+
+        // Weighted prize generation
+        const prizes = [
+            { prize: 10, weight: 50 },
+            { prize: 20, weight: 30 },
+            { prize: 50, weight: 19 },
+            { prize: 1000, weight: 1 }
+        ];
+
+        const totalWeight = prizes.reduce((sum, p) => sum + p.weight, 0);
+        let random = Math.random() * totalWeight;
+        let selectedPrize = 0;
+
+        for (const prize of prizes) {
+            if (random < prize.weight) {
+                selectedPrize = prize.prize;
+                break;
+            }
+            random -= prize.weight;
+        }
+
+        await pool.query('UPDATE users SET has_spun = true, spin_prize = $1 WHERE id = $2', [selectedPrize, req.session.userId]);
+        req.session.user.has_spun = true;
+        req.session.user.spin_prize = selectedPrize;
+
+        res.json({ prize: selectedPrize });
+
+    } catch (error) {
+        console.error('Spin error:', error);
+        res.status(500).json({ message: 'An unexpected error occurred.' });
+    }
+});
+
 // Admin Login GET route
 app.get('/admin/login', (req, res) => {
     res.render('admin_login', { message: null });
@@ -393,6 +464,22 @@ app.post('/admin/delete-user/:id', async (req, res) => {
         res.redirect('/admin/dashboard');
     } catch (error) {
         console.error('Error deleting user:', error);
+        res.redirect('/admin/dashboard');
+    }
+});
+
+// Admin Generate Coupon
+app.post('/admin/generate-coupon/:id', async (req, res) => {
+    if (!req.session.isAdmin) {
+        return res.redirect('/admin/login');
+    }
+    const userId = req.params.id;
+    try {
+        const couponCode = 'DREAM' + uuidv4().split('-')[0].toUpperCase();
+        await pool.query('UPDATE users SET coupon_code = $1 WHERE id = $2', [couponCode, userId]);
+        res.redirect('/admin/dashboard');
+    } catch (error) {
+        console.error('Error generating coupon:', error);
         res.redirect('/admin/dashboard');
     }
 });

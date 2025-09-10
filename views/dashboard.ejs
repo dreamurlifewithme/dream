@@ -29,6 +29,49 @@
             font-weight: bold;
             color: #91eae4;
         }
+        .coupon-section, .spin-section {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            text-align: center;
+        }
+        .coupon-code {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #91eae4;
+            border: 2px dashed #91eae4;
+            padding: 10px;
+            display: inline-block;
+            margin-top: 10px;
+        }
+        .spin-wheel {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            background: conic-gradient(
+                #ffadad, #ffd6a5, #fdffb6, #caffbf, #9bf6ff, #a0c4ff, #bdb2ff, #ffc6ff
+            );
+            margin: 20px auto;
+            transition: transform 4s ease-out;
+        }
+        .spin-button {
+            background-color: #86a8e7;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.1em;
+        }
+        .spin-button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .prize-display {
+            margin-top: 15px;
+            font-size: 1.2em;
+        }
     </style>
 </head>
 <body>
@@ -46,6 +89,32 @@
             <p><strong>City:</strong> <%= user.city %></p>
             <p><strong>Contact:</strong> <%= user.contact %></p>
             <p><a href="/edit-profile" style="color: #86a8e7; text-decoration: none;">Edit Profile</a></p>
+        </div>
+
+        <div class="coupon-section">
+            <h3>Your Unique Draw Coupon</h3>
+            <% if (user.coupon_code) { %>
+                <p>Here is your coupon code for the lucky draw. Keep it safe!</p>
+                <div class="coupon-code"><%= user.coupon_code %></div>
+            <% } else { %>
+                <p>You have not requested a coupon yet. Click the button to request one from the admin.</p>
+                <button id="request-coupon-btn" class="spin-button">Get Coupon</button>
+                <p id="coupon-request-message" style="margin-top: 10px; color: #91eae4;"></p>
+            <% } %>
+        </div>
+
+        <div class="spin-section">
+            <h3>Lucky Spin</h3>
+            <p>Spin the wheel to win an instant prize! You only get one spin.</p>
+            <div class="spin-wheel" id="spin-wheel"></div>
+            <button class="spin-button" id="spin-button" <%= user.has_spun ? 'disabled' : '' %>>
+                <%= user.has_spun ? 'Already Spun' : 'Spin the Wheel!' %>
+            </button>
+            <div class="prize-display" id="prize-display">
+                <% if (user.has_spun) { %>
+                    You won: ₹<%= user.spin_prize %>
+                <% } %>
+            </div>
         </div>
 
         <div class="user-stats">
@@ -86,8 +155,62 @@
         </form>
 
         <div class="contact-info">
-            <p>Contact: 8341569495 | E-mail: <a href="mailto:dreamurlifewithme@gmail.com">dreamurlifewithme@gmail.com</a></p>
+            <p>E-mail: <a href="mailto:dreamurlifewithme@gmail.com">dreamurlifewithme@gmail.com</a></p>
         </div>
     </div>
+
+    <script>
+        const spinButton = document.getElementById('spin-button');
+        const spinWheel = document.getElementById('spin-wheel');
+        const prizeDisplay = document.getElementById('prize-display');
+
+        spinButton.addEventListener('click', async () => {
+            spinButton.disabled = true;
+            spinWheel.style.transform = `rotate(${Math.random() * 3600 + 720}deg)`;
+
+            try {
+                const response = await fetch('/spin', { method: 'POST' });
+                const data = await response.json();
+
+                setTimeout(() => {
+                    if (response.ok) {
+                        prizeDisplay.textContent = `Congratulations! You won: ₹${data.prize}`;
+                    } else {
+                        prizeDisplay.textContent = data.message || 'An error occurred.';
+                    }
+                    spinButton.textContent = 'Already Spun';
+                }, 4000); // Wait for animation to finish
+
+            } catch (error) {
+                console.error('Spin error:', error);
+                prizeDisplay.textContent = 'An error occurred while spinning.';
+                spinButton.disabled = false; // Re-enable if there was an error
+            }
+        });
+
+        const requestCouponBtn = document.getElementById('request-coupon-btn');
+        if (requestCouponBtn) {
+            requestCouponBtn.addEventListener('click', async () => {
+                requestCouponBtn.disabled = true;
+                const messageEl = document.getElementById('coupon-request-message');
+                messageEl.textContent = 'Sending request...';
+
+                try {
+                    const response = await fetch('/request-coupon', { method: 'POST' });
+                    const data = await response.json();
+                    if (response.ok) {
+                        messageEl.innerHTML = `Request sent successfully.<br>Please contact admin on WhatsApp at +918341569495 to get your coupon.`;
+                    } else {
+                        messageEl.textContent = data.message || 'An error occurred.';
+                        requestCouponBtn.disabled = false;
+                    }
+                } catch (error) {
+                    console.error('Coupon request error:', error);
+                    messageEl.textContent = 'An error occurred while sending the request.';
+                    requestCouponBtn.disabled = false;
+                }
+            });
+        }
+    </script>
 </body>
 </html>

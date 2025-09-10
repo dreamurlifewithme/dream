@@ -184,6 +184,8 @@
                     <th>Name</th>
                     <th>Email</th>
                     <th>Contact</th>
+                    <th>Coupon Code</th>
+                    <th>Spin Prize</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
@@ -195,8 +197,15 @@
                         <td><%= user.name %></td>
                         <td><%= user.email %></td>
                         <td><%= user.contact %></td>
+                        <td><%= user.coupon_code || 'N/A' %></td>
+                        <td><%= user.spin_prize !== null ? '₹' + user.spin_prize : 'Not Spun' %></td>
                         <td><%= user.status %></td>
                         <td class="action-buttons">
+                            <% if (!user.coupon_code) { %>
+                                <form action="/admin/generate-coupon/<%= user.id %>" method="POST" style="display:inline;">
+                                    <button type="submit">Generate Coupon</button>
+                                </form>
+                            <% } %>
                             <form action="/admin/toggle-status/<%= user.id %>" method="POST" style="display:inline;">
                                 <button type="submit" class="<%= user.status === 'Active' ? 'deactivate' : '' %>">
                                     <%= user.status === 'Active' ? 'Deactivate' : 'Activate' %>
@@ -210,7 +219,7 @@
                 <% }); %>
                 <% if (users.length === 0) { %>
                     <tr>
-                        <td colspan="6">No users registered yet.</td>
+                        <td colspan="8">No users registered yet.</td>
                     </tr>
                 <% } %>
             </tbody>
