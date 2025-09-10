@@ -128,12 +128,12 @@
             </div>
         </div>
 
-        <div class="draw-status">
+        <div class="draw-status <%= user.is_winner ? 'winner-announcement' : '' %>">
             <% if (user.is_winner) { %>
-                <p class="winner-message">Congratulations! You are a winner!</p>
-                <p>Your prize position: <strong><%= user.winner_position %></strong></p>
+                <h2>Congratulations!</h2>
+                <p>You have won the <strong><%= user.winner_position %></strong> prize!</p>
             <% } else { %>
-                <p>Draw not yet completed or you are not a winner.</p>
+                <p>The draw has not been performed yet. Stay tuned!</p>
             <% } %>
         </div>
 
@@ -206,6 +206,14 @@
                     }
                 } catch (error) {
                     console.error('Coupon request error:', error);
+                    messageEl.textContent = 'An error occurred while sending the request.';
+                    requestCouponBtn.disabled = false;
+                }
+            });
+        }
+    </script>
+</body>
+</html>              console.error('Coupon request error:', error);
                     messageEl.textContent = 'An error occurred while sending the request.';
                     requestCouponBtn.disabled = false;
                 }

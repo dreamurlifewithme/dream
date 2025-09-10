@@ -433,18 +433,70 @@ app.get('/admin/dashboard', async (req, res) => {
         const activeUsers = activeUsersResult.rows[0].activeusers;
         const usersResult = await pool.query('SELECT * FROM users');
         const users = usersResult.rows;
+        const winnersResult = await pool.query('SELECT * FROM users WHERE is_winner = 1 ORDER BY winner_position');
+        const winners = winnersResult.rows;
         console.log('Dashboard data fetched. Rendering page...'); // ADD THIS LINE
         res.render('admin_dashboard', {
             users: users,
             message: null,
             prizes: prizes,
-            winners: [],
+            winners: winners,
             totalUsers: totalUsers,
             activeUsers: activeUsers
         });
     } catch (error) {
         console.error('Error loading admin dashboard:', error);
         res.render('admin_dashboard', { users: [], message: 'Error loading users.', prizes: prizes, winners: [], totalUsers: 0, activeUsers: 0 });
+    }
+});
+
+// Admin Draw
+app.post('/admin/draw', async (req, res) => {
+    if (!req.session.isAdmin) {
+        return res.redirect('/admin/login');
+    }
+
+    try {
+        // Check if the draw has already been performed
+        const winnersResult = await pool.query('SELECT * FROM users WHERE is_winner = 1');
+        if (winnersResult.rows.length > 0) {
+            // You might want to add a message to the admin dashboard view
+            return res.redirect('/admin/dashboard');
+        }
+
+        // Fetch all users
+        const usersResult = await pool.query('SELECT * FROM users');
+        const users = usersResult.rows;
+
+        // Check if there are enough users to draw
+        if (users.length < 20) {
+            // You might want to add a message to the admin dashboard view
+            return res.redirect('/admin/dashboard');
+        }
+
+        // Shuffle users to randomize
+        const shuffledUsers = users.sort(() => 0.5 - Math.random());
+
+        // Select winners
+        const winners = {
+            '1st': shuffledUsers.slice(0, 1),
+            '2nd': shuffledUsers.slice(1, 2),
+            '3rd': shuffledUsers.slice(2, 3),
+            '4th-10th': shuffledUsers.slice(3, 10)
+        };
+
+        // Update database with winners
+        for (const position in winners) {
+            for (const user of winners[position]) {
+                await pool.query('UPDATE users SET is_winner = 1, winner_position = $1 WHERE id = $2', [position, user.id]);
+            }
+        }
+
+        res.redirect('/admin/dashboard');
+
+    } catch (error) {
+        console.error('Error performing draw:', error);
+        res.redirect('/admin/dashboard');
     }
 });
 

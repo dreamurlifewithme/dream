@@ -226,6 +226,14 @@
         </table>
 
         <div class="winner-section">
+            <form action="/admin/draw" method="POST" onsubmit="return confirm('Are you sure you want to perform the draw? This action cannot be undone.');">
+                <button type="submit" class="draw-button" <%- totalUsers < 20 ? 'disabled' : '' %>>
+                    Perform Draw
+                </button>
+            </form>
+            <% if (totalUsers < 20) { %>
+                <p>You need at least 20 registered users to perform the draw.</p>
+            <% } %>
             <h3>Draw Results</h3>
             <% if (winners && winners.length > 0) { %>
                 <ul class="winner-list">
@@ -256,6 +264,10 @@
 
         <form action="/admin/logout" method="POST">
             <button type="submit" class="logout-button">Logout</button>
+        </form>
+    </div>
+</body>
+</html>out</button>
         </form>
     </div>
 </body>
